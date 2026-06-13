@@ -48,6 +48,14 @@
 #include <Messages/RequestRespawn.h>
 #include <Messages/PartyCreateRequest.h>
 #include <Messages/PartyLeaveRequest.h>
+#include <Messages/NotifyQuestUpdate.h>
+#include <Messages/NotifyActorValueChanges.h>
+#include <Messages/NotifyDrawWeapon.h>
+#include <Messages/NotifyWeatherChange.h>
+#include <Messages/NotifyPlayerJoined.h>
+#include <Messages/NotifyPlayerLeft.h>
+
+#include <cstdarg>
 
 #include <Games/Misc/SubtitleManager.h>
 #include <Games/Overrides.h>
@@ -106,6 +114,13 @@ DebugService::DebugService(entt::dispatcher& aDispatcher, World& aWorld, Transpo
     m_dialogueConnection = m_dispatcher.sink<DialogueEvent>().connect<&DebugService::OnDialogue>(this);
     m_dispatcher.sink<SubtitleEvent>().connect<&DebugService::OnSubtitle>(this);
     m_dispatcher.sink<MoveActorEvent>().connect<&DebugService::OnMoveActor>(this);
+
+    m_questSyncLogConn       = m_dispatcher.sink<NotifyQuestUpdate>().connect<&DebugService::OnSyncLogQuestUpdate>(this);
+    m_actorValueSyncLogConn  = m_dispatcher.sink<NotifyActorValueChanges>().connect<&DebugService::OnSyncLogActorValueChanges>(this);
+    m_weaponDrawSyncLogConn  = m_dispatcher.sink<NotifyDrawWeapon>().connect<&DebugService::OnSyncLogDrawWeapon>(this);
+    m_weatherSyncLogConn     = m_dispatcher.sink<NotifyWeatherChange>().connect<&DebugService::OnSyncLogWeatherChange>(this);
+    m_playerJoinedSyncLogConn = m_dispatcher.sink<NotifyPlayerJoined>().connect<&DebugService::OnSyncLogPlayerJoined>(this);
+    m_playerLeftSyncLogConn  = m_dispatcher.sink<NotifyPlayerLeft>().connect<&DebugService::OnSyncLogPlayerLeft>(this);
 }
 
 void DebugService::OnDialogue(const DialogueEvent& acEvent) noexcept
@@ -420,6 +435,50 @@ void DebugService::OnDraw() noexcept
 
     if (m_showBuildTag)
         DrawBuildTag();
+}
+
+void DebugService::SyncLog(const char* aFmt, ...) noexcept
+{
+    char buf[512];
+    va_list args;
+    va_start(args, aFmt);
+    vsnprintf(buf, sizeof(buf), aFmt, args);
+    va_end(args);
+    m_syncLog.emplace_back(buf);
+    if (m_syncLog.size() > 400)
+        m_syncLog.erase(m_syncLog.begin());
+}
+
+void DebugService::OnSyncLogQuestUpdate(const NotifyQuestUpdate& acMsg) noexcept
+{
+    SyncLog("[RECV][Quest] formId=%X stage=%u status=%u type=%u",
+            acMsg.Id.BaseId, acMsg.Stage, acMsg.Status, acMsg.ClientQuestType);
+}
+
+void DebugService::OnSyncLogActorValueChanges(const NotifyActorValueChanges& acMsg) noexcept
+{
+    for (const auto& kv : acMsg.Values)
+        SyncLog("[RECV][AV] serverId=%u av=%u value=%.2f", acMsg.Id, kv.first, kv.second);
+}
+
+void DebugService::OnSyncLogDrawWeapon(const NotifyDrawWeapon& acMsg) noexcept
+{
+    SyncLog("[RECV][Weapon] formId=%X drawn=%s", acMsg.Id, acMsg.IsWeaponDrawn ? "true" : "false");
+}
+
+void DebugService::OnSyncLogWeatherChange(const NotifyWeatherChange& acMsg) noexcept
+{
+    SyncLog("[RECV][Weather] formId=%X", acMsg.Id.BaseId);
+}
+
+void DebugService::OnSyncLogPlayerJoined(const NotifyPlayerJoined& acMsg) noexcept
+{
+    SyncLog("[RECV][Player] %s joined (id=%u level=%u)", acMsg.Username.c_str(), acMsg.PlayerId, acMsg.Level);
+}
+
+void DebugService::OnSyncLogPlayerLeft(const NotifyPlayerLeft& acMsg) noexcept
+{
+    SyncLog("[RECV][Player] %s left (id=%u)", acMsg.Username.c_str(), acMsg.PlayerId);
 }
 
 void DebugService::ArrangeGameWindows(HWND aThisWindow) noexcept

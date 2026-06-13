@@ -10,6 +10,13 @@ struct DialogueEvent;
 struct SubtitleEvent;
 struct MoveActorEvent;
 
+struct NotifyQuestUpdate;
+struct NotifyActorValueChanges;
+struct NotifyDrawWeapon;
+struct NotifyWeatherChange;
+struct NotifyPlayerJoined;
+struct NotifyPlayerLeft;
+
 struct TransportService;
 struct BSAnimationGraphManager;
 
@@ -66,8 +73,16 @@ private:
     void DrawDragonSpawnerView();
     void DrawSyncTestView() noexcept;
 
+    void OnSyncLogQuestUpdate(const NotifyQuestUpdate&) noexcept;
+    void OnSyncLogActorValueChanges(const NotifyActorValueChanges&) noexcept;
+    void OnSyncLogDrawWeapon(const NotifyDrawWeapon&) noexcept;
+    void OnSyncLogWeatherChange(const NotifyWeatherChange&) noexcept;
+    void OnSyncLogPlayerJoined(const NotifyPlayerJoined&) noexcept;
+    void OnSyncLogPlayerLeft(const NotifyPlayerLeft&) noexcept;
+
 public:
     bool m_showDebugStuff = false;
+    void SyncLog(const char* aFmt, ...) noexcept;
 
 private:
     entt::dispatcher& m_dispatcher;
@@ -75,6 +90,7 @@ private:
     World& m_world;
 
     Vector<GamePtr<Actor>> m_actors;
+    Vector<String> m_syncLog;
 
     uint32_t m_formId = 0;
 
@@ -88,6 +104,12 @@ private:
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_drawImGuiConnection;
     entt::scoped_connection m_dialogueConnection;
+    entt::scoped_connection m_questSyncLogConn;
+    entt::scoped_connection m_actorValueSyncLogConn;
+    entt::scoped_connection m_weaponDrawSyncLogConn;
+    entt::scoped_connection m_weatherSyncLogConn;
+    entt::scoped_connection m_playerJoinedSyncLogConn;
+    entt::scoped_connection m_playerLeftSyncLogConn;
     bool m_showBuildTag = true;
     bool m_drawComponentsInWorldSpace = false;
 };

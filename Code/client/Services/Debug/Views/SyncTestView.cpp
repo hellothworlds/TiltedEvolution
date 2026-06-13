@@ -10,22 +10,6 @@
 #include <imgui.h>
 #include <inttypes.h>
 
-// -- Log ----------------------------------------------------------------------
-
-static Vector<String> s_log;
-
-static void Log(const char* aFmt, ...)
-{
-    char buf[256];
-    va_list args;
-    va_start(args, aFmt);
-    vsnprintf(buf, sizeof(buf), aFmt, args);
-    va_end(args);
-    s_log.emplace_back(buf);
-    if (s_log.size() > 200)
-        s_log.erase(s_log.begin());
-}
-
 // -- Quest Sync ---------------------------------------------------------------
 
 static char s_questFormIdHex[16] = "3372B";  // default: Main Quest (MQ101)
@@ -34,13 +18,13 @@ static int s_questStatus = 0;  // 0=StageUpdate 1=Started 2=Stopped
 
 static const char* kStatusNames[] = {"StageUpdate", "Started", "Stopped"};
 
-static void DoQuestInject(entt::dispatcher& aDispatcher)
+static void DoQuestInject(entt::dispatcher& aDispatcher, DebugService& aSelf)
 {
     uint32_t baseId = 0;
     sscanf_s(s_questFormIdHex, "%X", &baseId);
     if (!baseId)
     {
-        Log("[Quest] Bad form ID: %s", s_questFormIdHex);
+        aSelf.SyncLog("[INJECT][Quest] Bad form ID: %s", s_questFormIdHex);
         return;
     }
 
@@ -51,8 +35,9 @@ static void DoQuestInject(entt::dispatcher& aDispatcher)
     msg.Status = static_cast<uint8_t>(s_questStatus);
     msg.ClientQuestType = 2;  // STORY — passes the misc quest filter
 
+    aSelf.SyncLog("[INJECT][Quest] formId=%X stage=%d status=%d", baseId, s_questStage, s_questStatus);
     aDispatcher.trigger(msg);
-    Log("[Quest] Injected: formId=%X stage=%d status=%d", baseId, s_questStage, s_questStatus);
+    // [RECV] log line will also appear from the DebugService dispatcher listener
 }
 
 // -- Actor Values (Health) ----------------------------------------------------
@@ -60,7 +45,7 @@ static void DoQuestInject(entt::dispatcher& aDispatcher)
 static int s_avIndex = 24;   // 24 = Health
 static float s_avValue = 100.f;
 
-static void DoActorValueInject(entt::dispatcher& aDispatcher, World& aWorld)
+static void DoActorValueInject(entt::dispatcher& aDispatcher, World& aWorld, DebugService& aSelf)
 {
     uint32_t remoteServerId = 0;
     bool found = false;
@@ -76,7 +61,7 @@ static void DoActorValueInject(entt::dispatcher& aDispatcher, World& aWorld)
 
     if (!found)
     {
-        Log("[AV] No remote player entity found.");
+        aSelf.SyncLog("[INJECT][AV] No remote player entity found.");
         return;
     }
 
@@ -84,15 +69,15 @@ static void DoActorValueInject(entt::dispatcher& aDispatcher, World& aWorld)
     msg.Id = remoteServerId;
     msg.Values[static_cast<uint32_t>(s_avIndex)] = s_avValue;
 
+    aSelf.SyncLog("[INJECT][AV] serverId=%u av=%d value=%.1f", remoteServerId, s_avIndex, s_avValue);
     aDispatcher.trigger(msg);
-    Log("[AV] Injected: serverId=%u av=%d value=%.1f", remoteServerId, s_avIndex, s_avValue);
 }
 
 // -- Weapon Draw --------------------------------------------------------------
 
 static bool s_weaponDrawn = true;
 
-static void DoWeaponDrawInject(entt::dispatcher& aDispatcher, World& aWorld)
+static void DoWeaponDrawInject(entt::dispatcher& aDispatcher, World& aWorld, DebugService& aSelf)
 {
     auto view = aWorld.view<RemoteComponent, FormIdComponent>();
     for (auto entity : view)
@@ -102,8 +87,9 @@ static void DoWeaponDrawInject(entt::dispatcher& aDispatcher, World& aWorld)
         NotifyDrawWeapon msg{};
         msg.Id = formId.Id;
         msg.IsWeaponDrawn = s_weaponDrawn;
+
+        aSelf.SyncLog("[INJECT][Weapon] formId=%X drawn=%s", formId.Id, s_weaponDrawn ? "true" : "false");
         aDispatcher.trigger(msg);
-        Log("[Weapon] Injected: formId=%X drawn=%s", formId.Id, s_weaponDrawn ? "true" : "false");
         break;
     }
 }
@@ -112,7 +98,7 @@ static void DoWeaponDrawInject(entt::dispatcher& aDispatcher, World& aWorld)
 
 void DebugService::DrawSyncTestView() noexcept
 {
-    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
     ImGui::Begin("Sync Tests");
 
     // ---- Quest Sync ----
@@ -123,10 +109,10 @@ void DebugService::DrawSyncTestView() noexcept
         ImGui::Combo("Status", &s_questStatus, kStatusNames, 3);
 
         if (ImGui::Button("Inject Quest Update"))
-            DoQuestInject(m_dispatcher);
+            DoQuestInject(m_dispatcher, *this);
 
         ImGui::SameLine();
-        ImGui::TextDisabled("(e.g. 3372B=MQ101, 4B2D4=Bleak Falls)");
+        ImGui::TextDisabled("e.g. 3372B=MQ101  4B2D4=Bleak Falls");
     }
 
     ImGui::Separator();
@@ -143,7 +129,7 @@ void DebugService::DrawSyncTestView() noexcept
 
         ImGui::BeginDisabled(!hasRemote);
         if (ImGui::Button("Inject Actor Value"))
-            DoActorValueInject(m_dispatcher, m_world);
+            DoActorValueInject(m_dispatcher, m_world, *this);
         ImGui::EndDisabled();
     }
 
@@ -161,23 +147,24 @@ void DebugService::DrawSyncTestView() noexcept
 
         ImGui::BeginDisabled(!hasRemoteWeapon);
         if (ImGui::Button("Inject Draw State"))
-            DoWeaponDrawInject(m_dispatcher, m_world);
+            DoWeaponDrawInject(m_dispatcher, m_world, *this);
         ImGui::EndDisabled();
     }
 
     ImGui::Separator();
 
-    // ---- Log ----
+    // ---- Log ----------------------------------------------------------------
+    // Captures all injected messages AND real Notify* messages from the server.
+    // [INJECT] = sent by a button above. [RECV] = arrived from the network.
     ImGui::Text("Log");
     ImGui::SameLine();
     if (ImGui::SmallButton("Clear"))
-        s_log.clear();
+        m_syncLog.clear();
 
     ImGui::BeginChild("##synclog", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    for (const auto& line : s_log)
+    for (const auto& line : m_syncLog)
         ImGui::TextUnformatted(line.c_str());
 
-    // auto-scroll to bottom
     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
         ImGui::SetScrollHereY(1.f);
 

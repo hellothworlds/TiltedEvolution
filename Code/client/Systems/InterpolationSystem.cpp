@@ -1,6 +1,7 @@
 #include <TiltedOnlinePCH.h>
 
 #include <Systems/InterpolationSystem.h>
+#include <Systems/InterpolationLogic.h>
 #include <Components.h>
 
 #include <AI/AIProcess.h>
@@ -33,15 +34,7 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
     const auto& first = *(movements.begin());
     const auto& second = *(++movements.begin());
 
-    // Calculate delta movement since last update
-    auto delta = 0.0001f;
-    const auto tickDelta = static_cast<float>(second.Tick - first.Tick);
-    if (tickDelta > 0.f)
-    {
-        delta = 1.f / tickDelta * static_cast<float>(aTick - first.Tick);
-    }
-
-    delta = TiltedPhoques::Min(delta, 1.0f);
+    const float delta = CalcInterpolationDelta(first.Tick, second.Tick, aTick);
 
     const NiPoint3 position{TiltedPhoques::Lerp(first.Position, second.Position, delta)};
 
@@ -82,25 +75,7 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
 
 void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationComponent, const InterpolationComponent::TimePoint& acPoint) noexcept
 {
-    auto itor = std::begin(aInterpolationComponent.TimePoints);
-    const auto end = std::cend(aInterpolationComponent.TimePoints);
-
-    while (itor != end)
-    {
-        if (itor->Tick == acPoint.Tick)
-            return; // duplicate tick, discard
-
-        if (itor->Tick > acPoint.Tick)
-        {
-            aInterpolationComponent.TimePoints.insert(itor, acPoint);
-
-            return;
-        }
-
-        ++itor;
-    }
-
-    aInterpolationComponent.TimePoints.push_back(acPoint);
+    AddPointSorted(aInterpolationComponent.TimePoints, acPoint);
 }
 
 InterpolationComponent& InterpolationSystem::Setup(World& aWorld, const entt::entity aEntity) noexcept
