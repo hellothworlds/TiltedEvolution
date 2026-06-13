@@ -10,6 +10,22 @@
 #include <imgui.h>
 #include <inttypes.h>
 
+// -- Log ----------------------------------------------------------------------
+
+static Vector<String> s_log;
+
+static void Log(const char* aFmt, ...)
+{
+    char buf[256];
+    va_list args;
+    va_start(args, aFmt);
+    vsnprintf(buf, sizeof(buf), aFmt, args);
+    va_end(args);
+    s_log.emplace_back(buf);
+    if (s_log.size() > 200)
+        s_log.erase(s_log.begin());
+}
+
 // -- Quest Sync ---------------------------------------------------------------
 
 static char s_questFormIdHex[16] = "3372B";  // default: Main Quest (MQ101)
@@ -23,16 +39,20 @@ static void DoQuestInject(entt::dispatcher& aDispatcher)
     uint32_t baseId = 0;
     sscanf_s(s_questFormIdHex, "%X", &baseId);
     if (!baseId)
+    {
+        Log("[Quest] Bad form ID: %s", s_questFormIdHex);
         return;
+    }
 
     NotifyQuestUpdate msg{};
     msg.Id.BaseId = baseId;
     msg.Id.ModId = 0;
     msg.Stage = static_cast<uint16_t>(s_questStage);
     msg.Status = static_cast<uint8_t>(s_questStatus);
-    msg.ClientQuestType = 2;  // STORY type — passes the bEnableMiscQuestSync gate
+    msg.ClientQuestType = 2;  // STORY — passes the misc quest filter
 
     aDispatcher.trigger(msg);
+    Log("[Quest] Injected: formId=%X stage=%d status=%d", baseId, s_questStage, s_questStatus);
 }
 
 // -- Actor Values (Health) ----------------------------------------------------
@@ -42,26 +62,30 @@ static float s_avValue = 100.f;
 
 static void DoActorValueInject(entt::dispatcher& aDispatcher, World& aWorld)
 {
-    entt::entity firstRemote = entt::null;
     uint32_t remoteServerId = 0;
+    bool found = false;
 
     auto view = aWorld.view<RemoteComponent>();
     for (auto entity : view)
     {
         auto& remote = view.get<RemoteComponent>(entity);
-        firstRemote = entity;
         remoteServerId = remote.Id;
+        found = true;
         break;
     }
 
-    if (firstRemote == entt::null)
+    if (!found)
+    {
+        Log("[AV] No remote player entity found.");
         return;
+    }
 
     NotifyActorValueChanges msg{};
     msg.Id = remoteServerId;
     msg.Values[static_cast<uint32_t>(s_avIndex)] = s_avValue;
 
     aDispatcher.trigger(msg);
+    Log("[AV] Injected: serverId=%u av=%d value=%.1f", remoteServerId, s_avIndex, s_avValue);
 }
 
 // -- Weapon Draw --------------------------------------------------------------
@@ -79,6 +103,7 @@ static void DoWeaponDrawInject(entt::dispatcher& aDispatcher, World& aWorld)
         msg.Id = formId.Id;
         msg.IsWeaponDrawn = s_weaponDrawn;
         aDispatcher.trigger(msg);
+        Log("[Weapon] Injected: formId=%X drawn=%s", formId.Id, s_weaponDrawn ? "true" : "false");
         break;
     }
 }
@@ -87,15 +112,12 @@ static void DoWeaponDrawInject(entt::dispatcher& aDispatcher, World& aWorld)
 
 void DebugService::DrawSyncTestView() noexcept
 {
-    ImGui::SetNextWindowSize(ImVec2(380, 420), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(420, 560), ImGuiCond_FirstUseEver);
     ImGui::Begin("Sync Tests");
 
     // ---- Quest Sync ----
     if (ImGui::CollapsingHeader("Quest Sync", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::TextDisabled("Injects a NotifyQuestUpdate into the local dispatcher.");
-        ImGui::TextDisabled("Simulates the server telling this client a quest changed.");
-
         ImGui::InputText("Form ID (hex)", s_questFormIdHex, sizeof(s_questFormIdHex));
         ImGui::InputInt("Stage", &s_questStage);
         ImGui::Combo("Status", &s_questStatus, kStatusNames, 3);
@@ -103,8 +125,8 @@ void DebugService::DrawSyncTestView() noexcept
         if (ImGui::Button("Inject Quest Update"))
             DoQuestInject(m_dispatcher);
 
-        ImGui::Spacing();
-        ImGui::TextDisabled("Example IDs: 3372B=MQ101, 4B2D4=Bleak Falls, A5B3B=Riverwood quest");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(e.g. 3372B=MQ101, 4B2D4=Bleak Falls)");
     }
 
     ImGui::Separator();
@@ -112,14 +134,10 @@ void DebugService::DrawSyncTestView() noexcept
     // ---- Actor Values / Health ----
     if (ImGui::CollapsingHeader("Actor Values (needs 2nd player)", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::TextDisabled("Sets an actor value on the first remote player entity.");
-        ImGui::TextDisabled("Requires a second player connected to the server.");
-
-        ImGui::InputInt("AV Index (24=Health, 25=Magicka, 26=Stamina)", &s_avIndex);
+        ImGui::InputInt("AV Index  (24=Health  25=Magicka  26=Stamina)", &s_avIndex);
         ImGui::InputFloat("Value", &s_avValue, 1.f, 10.f, "%.1f");
 
-        auto view = m_world.view<RemoteComponent>();
-        bool hasRemote = !view.empty();
+        bool hasRemote = !m_world.view<RemoteComponent>().empty();
         if (!hasRemote)
             ImGui::TextColored({1.f, 0.4f, 0.4f, 1.f}, "No remote player found.");
 
@@ -134,8 +152,6 @@ void DebugService::DrawSyncTestView() noexcept
     // ---- Weapon Draw ----
     if (ImGui::CollapsingHeader("Weapon Draw (needs 2nd player)", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::TextDisabled("Forces the first remote player's weapon draw state.");
-
         ImGui::Checkbox("Weapon Drawn", &s_weaponDrawn);
 
         bool hasRemoteWeapon = false;
@@ -148,6 +164,24 @@ void DebugService::DrawSyncTestView() noexcept
             DoWeaponDrawInject(m_dispatcher, m_world);
         ImGui::EndDisabled();
     }
+
+    ImGui::Separator();
+
+    // ---- Log ----
+    ImGui::Text("Log");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear"))
+        s_log.clear();
+
+    ImGui::BeginChild("##synclog", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
+    for (const auto& line : s_log)
+        ImGui::TextUnformatted(line.c_str());
+
+    // auto-scroll to bottom
+    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+        ImGui::SetScrollHereY(1.f);
+
+    ImGui::EndChild();
 
     ImGui::End();
 }
