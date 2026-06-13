@@ -13,8 +13,13 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
 {
     auto& movements = aInterpolationComponent.TimePoints;
 
+    // When no data: hold last known position and zero movement so the actor stops cleanly
     if (movements.size() < 2)
+    {
+        if (!movements.empty() && apActor && apActor->currentProcess && apActor->currentProcess->middleProcess)
+            apActor->currentProcess->middleProcess->direction = 0.f;
         return;
+    }
 
     while (movements.size() > 2)
     {
@@ -47,11 +52,15 @@ void InterpolationSystem::Update(Actor* apActor, InterpolationComponent& aInterp
         return;
 
     apActor->ForcePosition(position);
-    apActor->LoadAnimationVariables(second.Variables);
+    // Use first (current) variables so animation state matches where the actor is now,
+    // not where they are headed — prevents snapping to future idle/walk/run state
+    apActor->LoadAnimationVariables(first.Variables);
 
+    // Direction lerps smoothly between snapshots
+    const auto direction = TiltedPhoques::Lerp(first.Direction, second.Direction, delta);
     if (apActor->currentProcess && apActor->currentProcess->middleProcess)
     {
-        apActor->currentProcess->middleProcess->direction = second.Direction;
+        apActor->currentProcess->middleProcess->direction = direction;
     }
 
     auto rotA = first.Rotation;
@@ -78,6 +87,9 @@ void InterpolationSystem::AddPoint(InterpolationComponent& aInterpolationCompone
 
     while (itor != end)
     {
+        if (itor->Tick == acPoint.Tick)
+            return; // duplicate tick, discard
+
         if (itor->Tick > acPoint.Tick)
         {
             aInterpolationComponent.TimePoints.insert(itor, acPoint);
