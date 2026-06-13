@@ -65,6 +65,14 @@ TransportService::TransportService(World& aWorld, entt::dispatcher& aDispatcher)
     };
 }
 
+void TransportService::Connect(const std::string& acAddress) noexcept
+{
+    m_lastServerAddress = acAddress.c_str();
+    m_reconnectAttempts = 0;
+    m_reconnectCooldown = 0;
+    Client::Connect(acAddress);
+}
+
 bool TransportService::Send(const ClientMessage& acMessage) const noexcept
 {
     static thread_local ScratchAllocator s_allocator(1 << 18);
@@ -169,9 +177,24 @@ void TransportService::OnDisconnected(EDisconnectReason aReason)
 {
     m_connected = false;
 
-    spdlog::warn("Disconnected from server {}", aReason);
+    spdlog::warn("Disconnected from server, reason: {}", aReason);
 
     m_dispatcher.trigger(DisconnectedEvent());
+
+    // kAborted = user pressed disconnect / Close() was called deliberately. Don't reconnect.
+    const bool isUnexpected = (aReason != kAborted) && (aReason != kNormal);
+    if (isUnexpected && !m_lastServerAddress.empty() && m_reconnectAttempts < kMaxReconnectAttempts)
+    {
+        m_reconnectCooldown = kReconnectCooldownFrames;
+        spdlog::info("[Reconnect] Will retry in ~3s (attempt {}/{})", m_reconnectAttempts + 1, kMaxReconnectAttempts);
+    }
+    else if (!isUnexpected)
+    {
+        // Deliberate disconnect — clear saved address so we don't accidentally reconnect later.
+        m_lastServerAddress = "";
+        m_reconnectAttempts = 0;
+        m_reconnectCooldown = 0;
+    }
 }
 
 void TransportService::OnUpdate()
@@ -181,11 +204,26 @@ void TransportService::OnUpdate()
 void TransportService::HandleUpdate(const UpdateEvent& acEvent) noexcept
 {
     Update();
+
+    if (m_reconnectCooldown > 0)
+    {
+        --m_reconnectCooldown;
+        if (m_reconnectCooldown == 0)
+        {
+            ++m_reconnectAttempts;
+            spdlog::info("[Reconnect] Connecting to {} (attempt {}/{})", m_lastServerAddress.c_str(), m_reconnectAttempts, kMaxReconnectAttempts);
+            Client::Connect(std::string(m_lastServerAddress.c_str()));
+        }
+    }
 }
 
 void TransportService::HandleConnected(const ConnectedEvent& acEvent) noexcept
 {
     m_localPlayerId = acEvent.PlayerId;
+    if (m_reconnectAttempts > 0)
+        spdlog::info("[Reconnect] Reconnected successfully after {} attempt(s).", m_reconnectAttempts);
+    m_reconnectAttempts = 0;
+    m_reconnectCooldown = 0;
 }
 
 void TransportService::HandleDisconnected(const DisconnectedEvent& acEvent) noexcept

@@ -28,6 +28,9 @@ struct TransportService : Client
 
     bool Send(const ClientMessage& acMessage) const noexcept;
 
+    // Shadows Client::Connect — saves the address so auto-reconnect can reuse it.
+    void Connect(const std::string& acAddress) noexcept;
+
     void OnConsume(const void* apData, uint32_t aSize) override;
     void OnConnected() override;
     void OnDisconnected(EDisconnectReason aReason) override;
@@ -48,11 +51,18 @@ protected:
     void HandleNotifySettingsChange(const NotifySettingsChange& acMessage) noexcept;
 
 private:
+    static constexpr uint32_t kMaxReconnectAttempts  = 5;
+    static constexpr uint32_t kReconnectCooldownFrames = 180; // ~3 s at 60 fps
+
     World& m_world;
     entt::dispatcher& m_dispatcher;
     bool m_connected;
     String m_serverPassword{};
     uint32_t m_localPlayerId;
+
+    String   m_lastServerAddress{};
+    uint32_t m_reconnectAttempts{0};
+    uint32_t m_reconnectCooldown{0};
 
     entt::scoped_connection m_updateConnection;
     entt::scoped_connection m_sendServerMessageConnection;
