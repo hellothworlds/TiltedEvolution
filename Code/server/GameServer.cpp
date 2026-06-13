@@ -19,6 +19,8 @@
 #include <Messages/NotifyPlayerJoined.h>
 #include <Messages/NotifyPlayerLeft.h>
 #include <Messages/NotifySettingsChange.h>
+#include <Messages/NotifyQuestUpdate.h>
+#include <Messages/NotifyWeatherChange.h>
 #include <console/ConsoleRegistry.h>
 #include <resources/ResourceCollection.h>
 
@@ -108,6 +110,39 @@ Console::Command<> ShowMoPoStatus(
         };
 
         spdlog::get("ConOut")->info("Modcheck enabled: {}\nSKSE allowed: {}\nMO2 allowed: {}", formatStatus(bEnableModCheck), formatStatus(bAllowSKSE), formatStatus(bAllowMO2));
+    });
+
+// -- Test commands (developer use, not intended for live servers) --
+Console::Command<int64_t, int64_t> TestQuest(
+    "TestQuest", "Broadcast a fake quest update to all connected players. Usage: TestQuest <baseFormId_hex> <stage>",
+    [](Console::ArgStack& aStack)
+    {
+        auto stage = aStack.Pop<int64_t>();
+        auto baseId = aStack.Pop<int64_t>();
+
+        NotifyQuestUpdate msg{};
+        msg.Id.BaseId = static_cast<uint32_t>(baseId);
+        msg.Id.ModId = 0;
+        msg.Stage = static_cast<uint16_t>(stage);
+        msg.Status = NotifyQuestUpdate::StageUpdate;
+        msg.ClientQuestType = 2;  // STORY — passes the misc quest filter
+
+        GameServer::Get()->SendToPlayers(msg);
+        spdlog::get("ConOut")->info("Sent test quest: formId={:X} stage={}", baseId, stage);
+    });
+
+Console::Command<int64_t> TestWeather(
+    "TestWeather", "Broadcast a fake weather change to all connected players. Usage: TestWeather <weatherFormId_hex>",
+    [](Console::ArgStack& aStack)
+    {
+        auto weatherId = aStack.Pop<int64_t>();
+
+        NotifyWeatherChange msg{};
+        msg.Id.BaseId = static_cast<uint32_t>(weatherId);
+        msg.Id.ModId = 0;
+
+        GameServer::Get()->SendToPlayers(msg);
+        spdlog::get("ConOut")->info("Sent test weather: formId={:X}", weatherId);
     });
 
 // -- Constants --

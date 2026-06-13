@@ -64,6 +64,7 @@ private:
     void DrawCombatView();
     void DrawCalendarView();
     void DrawDragonSpawnerView();
+    void DrawSyncTestView() noexcept;
 
 public:
     bool m_showDebugStuff = false;
