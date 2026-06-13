@@ -1028,6 +1028,19 @@ void GameServer::HandleAuthenticationRequest(const ConnectionId_t aConnectionId,
             spdlog::debug("[GameServer] New notify player {:x} {}", notify.PlayerId, notify.Username.c_str());
 
             Send(pPlayer->GetConnectionId(), notify);
+
+            // Replay the existing player's quest log so the joining player catches up.
+            const auto& questEntries = pOtherPlayer->GetQuestLogComponent().QuestContent.Entries;
+            spdlog::info("[GameServer] Sending {} quest entries to joining player {:x}", questEntries.size(), aConnectionId);
+            for (const auto& entry : questEntries)
+            {
+                NotifyQuestUpdate questCatchup{};
+                questCatchup.Id = entry.Id;
+                questCatchup.Stage = entry.Stage;
+                questCatchup.Status = NotifyQuestUpdate::Started;
+                questCatchup.ClientQuestType = 2; // STORY — passes client-side misc filter
+                Send(pPlayer->GetConnectionId(), questCatchup);
+            }
         }
 
         m_pWorld->GetDispatcher().trigger(PlayerJoinEvent(pPlayer, acRequest->WorldSpaceId, acRequest->CellId, acRequest->PlayerTime));
